@@ -186,8 +186,43 @@ def process_queue(driver, task_queue):
                             time.sleep(1)
 
                             dialog.type_keys("{ENTER}")
-                            print("✅ 파일 업로드 완료 (pywinauto win32 제어 성공)")
-                            time.sleep(3)
+                            print("✅ 파일 선택 완료 (pywinauto win32 제어 성공)")
+
+                            # =========================================================
+                            # 💡 개선된 부분: 대용량 파일 업로드 동적 대기 로직
+                            # =========================================================
+                            print(
+                                "⏳ 파일이 웹 페이지에 완전히 업로드되기를 대기합니다..."
+                            )
+                            try:
+                                # 최대 60초까지 넉넉하게 대기합니다. (필요 시 시간 조절 가능)
+                                upload_wait = WebDriverWait(driver, 60)
+
+                                # 업로드한 파일의 이름만 추출 (예: test_code.py)
+                                file_basename = os.path.basename(file_path)
+
+                                # 파일 이름이 포함된 요소나 텍스트가 화면에 나타날 때까지 대기
+                                # (Gemini UI에 첨부된 파일 칩이 생성되는 것을 감지)
+                                file_chip_xpath = f"//*[contains(text(), '{file_basename}') or contains(@aria-label, '{file_basename}')]"
+
+                                upload_wait.until(
+                                    EC.presence_of_element_located(
+                                        (By.XPATH, file_chip_xpath)
+                                    )
+                                )
+                                print(
+                                    f"✅ 웹 페이지 파일 업로드 완료 확인! ('{file_basename}' 감지됨)"
+                                )
+                                time.sleep(
+                                    1
+                                )  # UI가 완전히 렌더링되고 안정화되도록 1초 추가 대기
+
+                            except Exception as wait_e:
+                                print(
+                                    f"⚠️ 파일 업로드 완료 대기 중 시간 초과 또는 요소를 찾을 수 없음: {wait_e}"
+                                )
+                            # =========================================================
+
                         except Exception as win_e:
                             print(f"❌ OS 파일 열기 창 제어 실패: {win_e}")
 
@@ -359,7 +394,7 @@ def start_gemini_manual_session():
             {
                 "prompt": "안녕, 내가 올린 파이썬 코드를 분석해주고, 시간 복잡도를 알려줘.",
                 "attachment_action": "파일 업로드",
-                "file_path": "test_code.py",
+                "file_path": r"C:\Users\gksdbwns\yolo01\gmpy\v4b.py",
                 "new_chat": True,
             },
             {
