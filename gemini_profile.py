@@ -36,14 +36,15 @@ def kill_chrome_processes():
 
 
 def wait_for_response(driver):
-    """답변 생성을 대기하는 함수입니다."""
-    print("⏳ 답변 생성 대기 중... (타임아웃 없음)")
+    """답변 생성을 대기하는 함수입니다. (최대 10분 타임아웃 적용)"""
+    print("⏳ 답변 생성 대기 중... (최대 10분 대기)")
     time.sleep(2)
 
     stop_btn_xpath = (
         "//button[contains(@aria-label, '중지') or contains(@aria-label, 'Stop')]"
     )
 
+    # 1단계: 답변 생성 시작 감지
     generating_started = False
     for _ in range(40):
         stop_btns = driver.find_elements(By.XPATH, stop_btn_xpath)
@@ -53,14 +54,27 @@ def wait_for_response(driver):
             break
         time.sleep(0.5)
 
+    # 2단계: 답변 생성 완료 대기 (타임아웃 적용)
     if generating_started:
+        start_wait_time = time.time()
+        max_wait_time = 600  # 10분 (초 단위)
+
         while True:
+            # 타임아웃 체크 (현재 시간 - 대기 시작 시간)
+            elapsed_time = time.time() - start_wait_time
+            if elapsed_time > max_wait_time:
+                print(
+                    f"⚠️ 경고: 답변 생성 대기 시간 초과 ({max_wait_time}초). 무한 루프를 방지하고 다음 작업으로 넘어갑니다."
+                )
+                break
+
             stop_btns = driver.find_elements(By.XPATH, stop_btn_xpath)
             if not any(btn.is_displayed() for btn in stop_btns):
                 print("✅ 답변 생성 완료 ('응답 중지' 버튼 사라짐)!")
                 time.sleep(2)
                 break
-            time.sleep(1)
+
+            time.sleep(1)  # 1초마다 버튼이 사라졌는지 확인
     else:
         print("✅ 답변이 생성 완료되었습니다 ('응답 중지' 버튼 미감지).")
         time.sleep(2)
