@@ -99,6 +99,16 @@ def process_queue(driver, task_queue):
 
         try:
             # =====================================================
+            # 💡 [추가된 로직] Deep Research일 경우 강제로 새 채팅 활성화
+            # =====================================================
+            if task.get("attachment_action") == "Deep Research" and not task.get(
+                "new_chat"
+            ):
+                print(
+                    "💡 'Deep Research' 옵션이 감지되어 강제로 '새 채팅'을 시작합니다."
+                )
+                task["new_chat"] = True  # 값을 강제로 True로 덮어씌움
+            # =====================================================
             # 1. 새 채팅(new_chat) 처리 로직 추가 (여기를 추가하세요!)
             # =====================================================
             if task.get("new_chat"):
