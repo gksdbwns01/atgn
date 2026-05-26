@@ -98,41 +98,15 @@ def process_queue(driver, task_queue):
         )
 
         try:
-            # 1. 새 채팅 시작 여부 판별
-            # 💡 수정 포인트: attachment_action이 'Deep Research'라면 큐의 설정과 무조건 새 채팅(True)으로 취급합니다.
-            action_name = task.get("attachment_action")
-            is_deep_research = action_name == "Deep Research"
-            should_new_chat = task.get("new_chat") or is_deep_research
-
-            if should_new_chat:
-                if is_deep_research:
-                    print("🔍 Deep Research 작업 감지: 무조건 새 채팅방을 생성합니다.")
-                else:
-                    print(
-                        "🔄 단축키(Ctrl + Shift + O)를 이용하여 새 채팅방을 생성합니다."
-                    )
-
-                try:
-                    actions = ActionChains(driver)
-                    actions.key_down(Keys.CONTROL).key_down(Keys.SHIFT).send_keys(
-                        "o"
-                    ).key_up(Keys.SHIFT).key_up(Keys.CONTROL).perform()
-
-                    wait.until(
-                        EC.presence_of_element_located(
-                            (By.CSS_SELECTOR, "div[contenteditable='true']")
-                        )
-                    )
-                    time.sleep(2)
-                    print("✅ 새 채팅방 전환 성공")
-                except Exception as e:
-                    print(f"⚠️ 새 채팅 단축키 조작 실패: {e}")
-
             # 2. 첨부 메뉴 액션 처리
-            if action_name:
-                print(f"🚀 메뉴 동작 시도: {action_name}")
+            action_name = task.get("attachment_action")
+            file_path = task.get("file_path")
+
+            # [1단계] 업로드할 파일이 있다면 우선적으로 파일 업로드 진행
+            if file_path:
+                print("📂 파일 업로드 시도 중...")
                 try:
-                    # ➕(첨부) 버튼 클릭 - 더 넓은 범위의 버튼 레이블 포용
+                    # ➕(첨부) 버튼 클릭
                     attach_btn_xpath = (
                         "//button["
                         "contains(@aria-label, '업로드') or "
@@ -153,34 +127,32 @@ def process_queue(driver, task_queue):
                             break
                     time.sleep(1.5)
 
-                    # 파일 업로드 동작 처리
-                    if action_name == "파일 업로드" and task.get("file_path"):
-                        # 💡 1. 단일 문자열이 들어와도 리스트로 변환하여 통일성 유지
-                        file_paths = task["file_path"]
-                        if isinstance(file_paths, str):
-                            file_paths = [file_paths]
+                    # 파일 경로 리스트 변환 및 검증
+                    file_paths = (
+                        file_path if isinstance(file_path, list) else [file_path]
+                    )
+                    valid_paths = []
+                    for fp in file_paths:
+                        abs_path = os.path.abspath(fp)
+                        if not os.path.exists(abs_path):
+                            print(f"⚠️ 에러: 업로드할 파일 없음. 경로: {abs_path}")
+                        else:
+                            valid_paths.append(abs_path)
 
-                        # 💡 2. 모든 파일이 존재하는지 검증 및 절대 경로 변환
-                        valid_paths = []
-                        for fp in file_paths:
-                            abs_path = os.path.abspath(fp)
-                            if not os.path.exists(abs_path):
-                                print(f"⚠️ 에러: 업로드할 파일 없음. 경로: {abs_path}")
-                            else:
-                                valid_paths.append(abs_path)
-
-                        if not valid_paths:
-                            print("❌ 유효한 파일이 없어 업로드를 취소합니다.")
-                            continue
-
-                        menu_item_xpath = (
-                            f"//*[(self::div or self::span or self::button or self::li) "
-                            f"and contains(text(), '{action_name}')]"
+                    if not valid_paths:
+                        print("❌ 유효한 파일이 없어 업로드를 취소합니다.")
+                    else:
+                        # 무조건 '파일 업로드' 메뉴 클릭
+                        upload_menu_xpath = (
+                            "//*[(self::div or self::span or self::button or self::li) "
+                            "and contains(text(), '파일 업로드')]"
                         )
                         wait.until(
-                            EC.presence_of_element_located((By.XPATH, menu_item_xpath))
+                            EC.presence_of_element_located(
+                                (By.XPATH, upload_menu_xpath)
+                            )
                         )
-                        menu_items = driver.find_elements(By.XPATH, menu_item_xpath)
+                        menu_items = driver.find_elements(By.XPATH, upload_menu_xpath)
 
                         clicked_menu = False
                         for item in reversed(menu_items):
@@ -190,15 +162,11 @@ def process_queue(driver, task_queue):
                                 break
 
                         if not clicked_menu:
-                            print(
-                                f"❌ 화면에서 '{action_name}' 메뉴를 찾을 수 없습니다."
-                            )
-                            continue
+                            print("❌ 화면에서 '파일 업로드' 메뉴를 찾을 수 없습니다.")
+                        else:
+                            print("📂 윈도우 열기 창 팝업 대기 중...")
+                            time.sleep(2)
 
-                        print("📂 윈도우 열기 창 팝업 대기 중...")
-                        time.sleep(2)
-
-                        try:
                             desktop = Desktop(backend="win32")
                             dialog = desktop.window(
                                 title_re=".*열기.*|.*Open.*|.*업로드.*",
@@ -208,78 +176,96 @@ def process_queue(driver, task_queue):
                             dialog.set_focus()
                             time.sleep(0.5)
 
-                            # 💡 3. 다중 파일 업로드를 위한 문자열 포맷팅 ("경로1" "경로2")
+                            # 다중 파일 업로드를 위한 포맷팅
                             file_name_edit = dialog.child_window(class_name="Edit")
                             formatted_paths = " ".join([f'"{p}"' for p in valid_paths])
                             file_name_edit.set_edit_text(formatted_paths)
                             time.sleep(1)
 
                             dialog.type_keys("{ENTER}")
-                            print("✅ 파일 선택 완료 (다중 파일 입력 성공)")
+                            print("✅ 파일 선택 완료")
 
-                            # 💡 4. 모든 파일이 업로드될 때까지 대기
+                            # 파일 업로드 완료 대기
                             print(
                                 "⏳ 파일들이 웹 페이지에 완전히 업로드되기를 대기합니다..."
                             )
-                            try:
-                                upload_wait = WebDriverWait(driver, 60)
-
-                                for valid_path in valid_paths:
-                                    file_basename = os.path.basename(valid_path)
-                                    file_chip_xpath = f"//*[contains(text(), '{file_basename}') or contains(@aria-label, '{file_basename}')]"
-
-                                    upload_wait.until(
-                                        EC.presence_of_element_located(
-                                            (By.XPATH, file_chip_xpath)
-                                        )
+                            upload_wait = WebDriverWait(driver, 60)
+                            for valid_path in valid_paths:
+                                file_basename = os.path.basename(valid_path)
+                                file_chip_xpath = f"//*[contains(text(), '{file_basename}') or contains(@aria-label, '{file_basename}')]"
+                                upload_wait.until(
+                                    EC.presence_of_element_located(
+                                        (By.XPATH, file_chip_xpath)
                                     )
-                                    print(f"✅ '{file_basename}' 업로드 완료 확인!")
+                                )
+                                print(f"✅ '{file_basename}' 업로드 완료 확인!")
+                            time.sleep(1.5)
 
-                                time.sleep(1)  # 안정화를 위한 추가 대기
+                except Exception as e:
+                    print(f"⚠️ 파일 업로드 실패: {e}")
 
-                            except Exception as wait_e:
-                                print(f"⚠️ 파일 업로드 완료 대기 중 시간 초과: {wait_e}")
+            # [2단계] 파일 업로드 외의 기타 액션 (Canvas, Deep Research 등) 실행
+            if action_name and action_name != "파일 업로드":
+                print(f"🚀 추가 메뉴 동작 시도: {action_name}")
+                try:
+                    # 메뉴가 닫혔을 수 있으므로 ➕(첨부) 버튼 다시 클릭
+                    attach_btn_xpath = (
+                        "//button["
+                        "contains(@aria-label, '업로드') or "
+                        "contains(@aria-label, '첨부') or "
+                        "contains(@aria-label, 'Upload') or "
+                        "contains(@aria-label, '파일') or "
+                        "contains(@aria-label, '추가')"
+                        "]"
+                    )
+                    wait.until(
+                        EC.presence_of_element_located((By.XPATH, attach_btn_xpath))
+                    )
+                    attach_btns = driver.find_elements(By.XPATH, attach_btn_xpath)
 
-                        except Exception as win_e:
-                            print(f"❌ OS 파일 열기 창 제어 실패: {win_e}")
+                    for btn in attach_btns:
+                        if btn.is_displayed():
+                            click_safely(driver, btn)
+                            break
+                    time.sleep(1.5)
 
-                    # 그 외의 첨부 액션(Canvas, Deep Research 등)
-                    else:
-                        if action_name in SUBMENU_TOOLS:
-                            tools_xpath = (
-                                "//*[(self::div or self::span or self::button or self::li) "
-                                "and contains(text(), '도구 더보기')]"
-                            )
-                            wait.until(
-                                EC.presence_of_element_located((By.XPATH, tools_xpath))
-                            )
-                            tool_items = driver.find_elements(By.XPATH, tools_xpath)
-
-                            for item in reversed(tool_items):
-                                if item.is_displayed():
-                                    click_safely(driver, item)
-                                    break
-                            time.sleep(1)
-
-                        menu_item_xpath = (
-                            f"//*[(self::div or self::span or self::button or self::li) "
-                            f"and contains(text(), '{action_name}')]"
+                    # 도구 더보기 서브메뉴 처리
+                    if action_name in SUBMENU_TOOLS:
+                        tools_xpath = (
+                            "//*[(self::div or self::span or self::button or self::li) "
+                            "and contains(text(), '도구 더보기')]"
                         )
                         wait.until(
-                            EC.presence_of_element_located((By.XPATH, menu_item_xpath))
+                            EC.presence_of_element_located((By.XPATH, tools_xpath))
                         )
-                        menu_items = driver.find_elements(By.XPATH, menu_item_xpath)
+                        tool_items = driver.find_elements(By.XPATH, tools_xpath)
 
-                        for item in reversed(menu_items):
+                        for item in reversed(tool_items):
                             if item.is_displayed():
                                 click_safely(driver, item)
                                 break
+                        time.sleep(1)
 
-                        print(f"✅ '{action_name}' 옵션 선택 완료")
-                        time.sleep(1.5)
+                    # 지정된 action_name 클릭
+                    menu_item_xpath = (
+                        f"//*[(self::div or self::span or self::button or self::li) "
+                        f"and contains(text(), '{action_name}')]"
+                    )
+                    wait.until(
+                        EC.presence_of_element_located((By.XPATH, menu_item_xpath))
+                    )
+                    menu_items = driver.find_elements(By.XPATH, menu_item_xpath)
+
+                    for item in reversed(menu_items):
+                        if item.is_displayed():
+                            click_safely(driver, item)
+                            break
+
+                    print(f"✅ '{action_name}' 옵션 선택 완료")
+                    time.sleep(1.5)
 
                 except Exception as e:
-                    print(f"⚠️ 메뉴 조작 실패: {e}")
+                    print(f"⚠️ 추가 메뉴 조작 실패: {e}")
 
             # 3. 질문 입력 및 전송
             print("🚀 질문 입력 중...")
@@ -416,7 +402,7 @@ def start_gemini_manual_session():
             },
             {
                 "prompt": "이 코드에 주석을 자세히 추가해줘",
-                "attachment_action": "Canvas",
+                "attachment_action": None,
                 "file_path": None,
                 "new_chat": False,
             },
