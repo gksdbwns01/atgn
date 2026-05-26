@@ -155,9 +155,22 @@ def process_queue(driver, task_queue):
 
                     # 파일 업로드 동작 처리
                     if action_name == "파일 업로드" and task.get("file_path"):
-                        file_path = os.path.abspath(task["file_path"])
-                        if not os.path.exists(file_path):
-                            print(f"⚠️ 에러: 업로드할 파일 없음. 경로: {file_path}")
+                        # 💡 1. 단일 문자열이 들어와도 리스트로 변환하여 통일성 유지
+                        file_paths = task["file_path"]
+                        if isinstance(file_paths, str):
+                            file_paths = [file_paths]
+
+                        # 💡 2. 모든 파일이 존재하는지 검증 및 절대 경로 변환
+                        valid_paths = []
+                        for fp in file_paths:
+                            abs_path = os.path.abspath(fp)
+                            if not os.path.exists(abs_path):
+                                print(f"⚠️ 에러: 업로드할 파일 없음. 경로: {abs_path}")
+                            else:
+                                valid_paths.append(abs_path)
+
+                        if not valid_paths:
+                            print("❌ 유효한 파일이 없어 업로드를 취소합니다.")
                             continue
 
                         menu_item_xpath = (
@@ -195,47 +208,37 @@ def process_queue(driver, task_queue):
                             dialog.set_focus()
                             time.sleep(0.5)
 
+                            # 💡 3. 다중 파일 업로드를 위한 문자열 포맷팅 ("경로1" "경로2")
                             file_name_edit = dialog.child_window(class_name="Edit")
-                            file_name_edit.set_edit_text(file_path)
+                            formatted_paths = " ".join([f'"{p}"' for p in valid_paths])
+                            file_name_edit.set_edit_text(formatted_paths)
                             time.sleep(1)
 
                             dialog.type_keys("{ENTER}")
-                            print("✅ 파일 선택 완료 (pywinauto win32 제어 성공)")
+                            print("✅ 파일 선택 완료 (다중 파일 입력 성공)")
 
-                            # =========================================================
-                            # 💡 개선된 부분: 대용량 파일 업로드 동적 대기 로직
-                            # =========================================================
+                            # 💡 4. 모든 파일이 업로드될 때까지 대기
                             print(
-                                "⏳ 파일이 웹 페이지에 완전히 업로드되기를 대기합니다..."
+                                "⏳ 파일들이 웹 페이지에 완전히 업로드되기를 대기합니다..."
                             )
                             try:
-                                # 최대 60초까지 넉넉하게 대기합니다. (필요 시 시간 조절 가능)
                                 upload_wait = WebDriverWait(driver, 60)
 
-                                # 업로드한 파일의 이름만 추출 (예: test_code.py)
-                                file_basename = os.path.basename(file_path)
+                                for valid_path in valid_paths:
+                                    file_basename = os.path.basename(valid_path)
+                                    file_chip_xpath = f"//*[contains(text(), '{file_basename}') or contains(@aria-label, '{file_basename}')]"
 
-                                # 파일 이름이 포함된 요소나 텍스트가 화면에 나타날 때까지 대기
-                                # (Gemini UI에 첨부된 파일 칩이 생성되는 것을 감지)
-                                file_chip_xpath = f"//*[contains(text(), '{file_basename}') or contains(@aria-label, '{file_basename}')]"
-
-                                upload_wait.until(
-                                    EC.presence_of_element_located(
-                                        (By.XPATH, file_chip_xpath)
+                                    upload_wait.until(
+                                        EC.presence_of_element_located(
+                                            (By.XPATH, file_chip_xpath)
+                                        )
                                     )
-                                )
-                                print(
-                                    f"✅ 웹 페이지 파일 업로드 완료 확인! ('{file_basename}' 감지됨)"
-                                )
-                                time.sleep(
-                                    1
-                                )  # UI가 완전히 렌더링되고 안정화되도록 1초 추가 대기
+                                    print(f"✅ '{file_basename}' 업로드 완료 확인!")
+
+                                time.sleep(1)  # 안정화를 위한 추가 대기
 
                             except Exception as wait_e:
-                                print(
-                                    f"⚠️ 파일 업로드 완료 대기 중 시간 초과 또는 요소를 찾을 수 없음: {wait_e}"
-                                )
-                            # =========================================================
+                                print(f"⚠️ 파일 업로드 완료 대기 중 시간 초과: {wait_e}")
 
                         except Exception as win_e:
                             print(f"❌ OS 파일 열기 창 제어 실패: {win_e}")
@@ -406,9 +409,12 @@ def start_gemini_manual_session():
         # =====================================================
         my_tasks = [
             {
-                "prompt": "안녕, 내가 올린 파이썬 코드를 분석해주고, 시간 복잡도를 알려줘.",
+                "prompt": "내가 올린 파이썬 코드들의 차이점을 설명해줘",
                 "attachment_action": "파일 업로드",
-                "file_path": r"C:\Users\gksdbwns\yolo01\gmpy\v4b.py",
+                "file_path": [
+                    r"C:\Users\gksdbwns\yolo01\gmpy\v4b.py",
+                    r"C:\Users\gksdbwns\yolo01\gmpy\v4.py",
+                ],
                 "new_chat": True,
             },
             {
