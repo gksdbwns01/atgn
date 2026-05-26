@@ -98,6 +98,37 @@ def process_queue(driver, task_queue):
         )
 
         try:
+            # =====================================================
+            # 1. 새 채팅(new_chat) 처리 로직 추가 (여기를 추가하세요!)
+            # =====================================================
+            if task.get("new_chat"):
+                print("✨ '새 채팅'을 시작합니다...")
+                try:
+                    # '새 채팅' 버튼을 찾는 XPath (한국어/영어 대응 및 구조 변경 대비)
+                    new_chat_xpath = (
+                        "//button[contains(@aria-label, '새 채팅') or "
+                        "contains(@aria-label, 'New chat') or "
+                        "contains(., '새 채팅')]"
+                    )
+                    wait.until(
+                        EC.presence_of_element_located((By.XPATH, new_chat_xpath))
+                    )
+                    new_chat_btns = driver.find_elements(By.XPATH, new_chat_xpath)
+
+                    clicked_new_chat = False
+                    for btn in new_chat_btns:
+                        if btn.is_displayed():
+                            click_safely(driver, btn)
+                            clicked_new_chat = True
+                            print("✅ '새 채팅' 버튼 클릭 완료")
+                            time.sleep(2)  # UI가 초기화될 때까지 잠시 대기
+                            break
+
+                    if not clicked_new_chat:
+                        print("⚠️ 화면에서 '새 채팅' 버튼을 찾을 수 없습니다.")
+
+                except Exception as e:
+                    print(f"⚠️ '새 채팅' 버튼 클릭 중 에러 발생: {e}")
             # 2. 첨부 메뉴 액션 처리
             action_name = task.get("attachment_action")
             file_path = task.get("file_path")
