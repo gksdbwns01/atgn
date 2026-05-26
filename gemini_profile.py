@@ -2,9 +2,8 @@ import os
 import time
 
 import psutil
-import pyautogui
-import pyperclip
 import undetected_chromedriver as uc
+from pywinauto import Desktop
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -16,7 +15,6 @@ from selenium.webdriver.support.ui import WebDriverWait
 # =====================================================
 TARGET_MODEL_INDEX = 2
 
-# "도구 더보기"를 눌러야만 나타나는 하위 메뉴 항목들을 정의합니다.
 SUBMENU_TOOLS = [
     "Canvas",
     "Deep Research",
@@ -27,19 +25,18 @@ SUBMENU_TOOLS = [
 
 
 def kill_chrome_processes():
-    """충돌 방지를 위해 기존 크롬 프로세스를 종료"""
+    """충돌 방지를 위해 기존 크롬 프로세스를 종료합니다."""
     for proc in psutil.process_iter(["name"]):
         try:
             if "chrome" in proc.info.get("name", "").lower():
                 proc.kill()
         except Exception:
             pass
-
     time.sleep(1)
 
 
 def wait_for_response(driver):
-    """답변 생성을 대기하는 함수"""
+    """답변 생성을 대기하는 함수입니다."""
     print("⏳ 답변 생성 대기 중... (타임아웃 없음)")
     time.sleep(2)
 
@@ -69,8 +66,16 @@ def wait_for_response(driver):
         time.sleep(2)
 
 
+def click_safely(driver, element):
+    """물리적 클릭(ActionChains) 시도 후 실패하면 JS 클릭으로 우회하는 헬퍼 함수"""
+    try:
+        ActionChains(driver).move_to_element(element).click().perform()
+    except Exception:
+        driver.execute_script("arguments[0].click();", element)
+
+
 def process_queue(driver, task_queue):
-    """정의된 큐(작업 리스트)를 순차적으로 실행하는 함수"""
+    """정의된 큐(작업 리스트)를 순차적으로 실행하는 함수입니다."""
     wait = WebDriverWait(driver, 20)
 
     for index, task in enumerate(task_queue):
@@ -98,17 +103,20 @@ def process_queue(driver, task_queue):
                 except Exception as e:
                     print(f"⚠️ 새 채팅 단축키 조작 실패: {e}")
 
-            # 2. 첨부 메뉴 액션 처리 (파일 업로드, 이미지 만들기, Canvas 등)
+            # 2. 첨부 메뉴 액션 처리
             action_name = task.get("attachment_action")
             if action_name:
-                print(f"🚀 메뉴 확장 시도: {action_name}")
+                print(f"🚀 메뉴 동작 시도: {action_name}")
                 try:
-                    # ➕(첨부) 버튼 클릭
+                    # ➕(첨부) 버튼 클릭 - 더 넓은 범위의 버튼 레이블 포용
                     attach_btn_xpath = (
-                        "//button[contains(@aria-label, '업로드') or "
+                        "//button["
+                        "contains(@aria-label, '업로드') or "
                         "contains(@aria-label, '첨부') or "
                         "contains(@aria-label, 'Upload') or "
-                        "contains(@aria-label, '파일')]"
+                        "contains(@aria-label, '파일') or "
+                        "contains(@aria-label, '추가')"
+                        "]"
                     )
                     wait.until(
                         EC.presence_of_element_located((By.XPATH, attach_btn_xpath))
@@ -117,45 +125,102 @@ def process_queue(driver, task_queue):
 
                     for btn in attach_btns:
                         if btn.is_displayed():
-                            driver.execute_script("arguments[0].click();", btn)
+                            click_safely(driver, btn)
                             break
-                    time.sleep(1)
-
-                    # 서브 메뉴("도구 더보기") 탐색 및 클릭
-                    if action_name in SUBMENU_TOOLS:
-                        tools_xpath = "//*[contains(text(), '도구 더보기')]"
-                        tools_item = wait.until(
-                            EC.element_to_be_clickable((By.XPATH, tools_xpath))
-                        )
-                        driver.execute_script("arguments[0].click();", tools_item)
-                        time.sleep(1)  # 서브 메뉴 렌더링 대기
-
-                    # 목표 메뉴 아이템 클릭
-                    menu_item_xpath = f"//*[contains(text(), '{action_name}')]"
-                    menu_item = wait.until(
-                        EC.element_to_be_clickable((By.XPATH, menu_item_xpath))
-                    )
-                    driver.execute_script("arguments[0].click();", menu_item)
-                    print(f"✅ '{action_name}' 옵션 선택 완료")
                     time.sleep(1.5)
 
-                    # '파일 업로드'인 경우 OS 열기 창 제어
+                    # 파일 업로드 동작 처리
                     if action_name == "파일 업로드" and task.get("file_path"):
                         file_path = os.path.abspath(task["file_path"])
                         if not os.path.exists(file_path):
                             print(f"⚠️ 에러: 업로드할 파일 없음. 경로: {file_path}")
-                        else:
-                            print("📂 윈도우 열기 창 대기 중...")
-                            time.sleep(2)
-                            pyperclip.copy(file_path)
-                            pyautogui.hotkey("ctrl", "v")
+                            continue
+
+                        # ✅ 핵심 수정: 텍스트가 포함된 유효한 태그만 찾되 유연성 확보
+                        menu_item_xpath = (
+                            f"//*[(self::div or self::span or self::button or self::li) "
+                            f"and contains(text(), '{action_name}')]"
+                        )
+                        wait.until(
+                            EC.presence_of_element_located((By.XPATH, menu_item_xpath))
+                        )
+                        menu_items = driver.find_elements(By.XPATH, menu_item_xpath)
+
+                        clicked_menu = False
+                        # 팝업은 DOM 끝에 추가되므로 역순(reversed)으로 찾아야 사이드바 간섭을 무시함
+                        for item in reversed(menu_items):
+                            if item.is_displayed():
+                                click_safely(driver, item)
+                                clicked_menu = True
+                                break
+
+                        if not clicked_menu:
+                            print(
+                                f"❌ 화면에서 '{action_name}' 메뉴를 찾을 수 없습니다."
+                            )
+                            continue
+
+                        print("📂 윈도우 열기 창 팝업 대기 중...")
+                        time.sleep(2)
+
+                        # pywinauto (win32 백엔드)를 사용하여 열기 창 제어 및 Enter 타격
+                        try:
+                            desktop = Desktop(backend="win32")
+                            dialog = desktop.window(
+                                title_re=".*열기.*|.*Open.*|.*업로드.*",
+                                class_name="#32770",
+                            )
+                            dialog.wait("visible", timeout=15)
+                            dialog.set_focus()
                             time.sleep(0.5)
-                            pyautogui.press("enter")
-                            print("✅ 파일 업로드 완료, 대기 중...")
+
+                            file_name_edit = dialog.child_window(class_name="Edit")
+                            file_name_edit.set_edit_text(file_path)
+                            time.sleep(1)
+
+                            dialog.type_keys("{ENTER}")
+                            print("✅ 파일 업로드 완료 (pywinauto win32 제어 성공)")
                             time.sleep(3)
+                        except Exception as win_e:
+                            print(f"❌ OS 파일 열기 창 제어 실패: {win_e}")
+
+                    # 그 외의 첨부 액션(Canvas 등)
+                    else:
+                        if action_name in SUBMENU_TOOLS:
+                            tools_xpath = (
+                                "//*[(self::div or self::span or self::button or self::li) "
+                                "and contains(text(), '도구 더보기')]"
+                            )
+                            wait.until(
+                                EC.presence_of_element_located((By.XPATH, tools_xpath))
+                            )
+                            tool_items = driver.find_elements(By.XPATH, tools_xpath)
+
+                            for item in reversed(tool_items):
+                                if item.is_displayed():
+                                    click_safely(driver, item)
+                                    break
+                            time.sleep(1)
+
+                        menu_item_xpath = (
+                            f"//*[(self::div or self::span or self::button or self::li) "
+                            f"and contains(text(), '{action_name}')]"
+                        )
+                        wait.until(
+                            EC.presence_of_element_located((By.XPATH, menu_item_xpath))
+                        )
+                        menu_items = driver.find_elements(By.XPATH, menu_item_xpath)
+
+                        for item in reversed(menu_items):
+                            if item.is_displayed():
+                                click_safely(driver, item)
+                                break
+
+                        print(f"✅ '{action_name}' 옵션 선택 완료")
+                        time.sleep(1.5)
 
                 except Exception as e:
-                    print(f"⚠️ 첨부 메뉴 조작 실패: {e}")
+                    print(f"⚠️ 메뉴 조작 실패: {e}")
 
             # 3. 질문 입력 및 전송
             print("🚀 질문 입력 중...")
@@ -176,7 +241,6 @@ def process_queue(driver, task_queue):
             input_box.send_keys(Keys.ENTER)
             time.sleep(1)
 
-            # 엔터가 동작하지 않았을 경우 수동 클릭
             if driver.execute_script(
                 "return arguments[0].innerText.trim().length > 0;", input_box
             ):
@@ -192,9 +256,7 @@ def process_queue(driver, task_queue):
                     clicked = False
                     for btn in send_btns:
                         if btn.is_displayed() and btn.is_enabled():
-                            ActionChains(driver).move_to_element(btn).click(
-                                btn
-                            ).perform()
+                            click_safely(driver, btn)
                             clicked = True
                             break
 
@@ -254,20 +316,14 @@ def start_gemini_manual_session():
 
         try:
             print("🔍 모델 드롭다운 탐색 시작...")
-            model_button_xpath = """
-            //button[
-                contains(., 'Flash')
-                or contains(., 'Lite')
-                or contains(., 'Pro')
-            ]
-            """
+            model_button_xpath = "//button[contains(., 'Flash') or contains(., 'Lite') or contains(., 'Pro')]"
             wait.until(EC.presence_of_element_located((By.XPATH, model_button_xpath)))
             model_btns = driver.find_elements(By.XPATH, model_button_xpath)
 
             model_btn = next((btn for btn in model_btns if btn.is_displayed()), None)
 
             if model_btn:
-                driver.execute_script("arguments[0].click();", model_btn)
+                click_safely(driver, model_btn)
                 time.sleep(1)
 
                 print(
@@ -300,7 +356,7 @@ def start_gemini_manual_session():
                 "new_chat": True,
             },
             {
-                "prompt": "이 주제에 대해서 심층 분석 보고서를 작성해줘.",
+                "prompt": "tlc ssd의 작동 원리에 대해서 심층 분석 보고서를 작성해줘.",
                 "attachment_action": "Deep Research",
                 "file_path": None,
                 "new_chat": True,
