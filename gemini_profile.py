@@ -409,6 +409,18 @@ def start_gemini_manual_session():
         # =====================================================
         my_tasks = [
             {
+                "prompt": "이 코드에 현재시간을 출력하는 코드를 추가해줘.",
+                "attachment_action": "Canvas",
+                "file_path": r"C:\Users\gksdbwns\Desktop\secupro\ge\gemini_profile\test_code.py",
+                "new_chat": True,
+            },
+            {
+                "prompt": "이 코드에 주석을 자세히 추가해줘",
+                "attachment_action": "Canvas",
+                "file_path": None,
+                "new_chat": False,
+            },
+            {
                 "prompt": "내가 올린 파이썬 코드들의 차이점을 설명해줘",
                 "attachment_action": "파일 업로드",
                 "file_path": [

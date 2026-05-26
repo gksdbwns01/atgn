@@ -36,14 +36,15 @@ def kill_chrome_processes():
 
 
 def wait_for_response(driver):
-    """답변 생성을 대기하는 함수입니다."""
-    print("⏳ 답변 생성 대기 중... (타임아웃 없음)")
+    """답변 생성을 대기하는 함수입니다. (최대 10분 타임아웃 적용)"""
+    print("⏳ 답변 생성 대기 중... (최대 10분 대기)")
     time.sleep(2)
 
     stop_btn_xpath = (
         "//button[contains(@aria-label, '중지') or contains(@aria-label, 'Stop')]"
     )
 
+    # 1단계: 답변 생성 시작 감지
     generating_started = False
     for _ in range(40):
         stop_btns = driver.find_elements(By.XPATH, stop_btn_xpath)
@@ -53,14 +54,27 @@ def wait_for_response(driver):
             break
         time.sleep(0.5)
 
+    # 2단계: 답변 생성 완료 대기 (타임아웃 적용)
     if generating_started:
+        start_wait_time = time.time()
+        max_wait_time = 600  # 10분 (초 단위)
+
         while True:
+            # 타임아웃 체크 (현재 시간 - 대기 시작 시간)
+            elapsed_time = time.time() - start_wait_time
+            if elapsed_time > max_wait_time:
+                print(
+                    f"⚠️ 경고: 답변 생성 대기 시간 초과 ({max_wait_time}초). 무한 루프를 방지하고 다음 작업으로 넘어갑니다."
+                )
+                break
+
             stop_btns = driver.find_elements(By.XPATH, stop_btn_xpath)
             if not any(btn.is_displayed() for btn in stop_btns):
                 print("✅ 답변 생성 완료 ('응답 중지' 버튼 사라짐)!")
                 time.sleep(2)
                 break
-            time.sleep(1)
+
+            time.sleep(1)  # 1초마다 버튼이 사라졌는지 확인
     else:
         print("✅ 답변이 생성 완료되었습니다 ('응답 중지' 버튼 미감지).")
         time.sleep(2)
@@ -141,9 +155,22 @@ def process_queue(driver, task_queue):
 
                     # 파일 업로드 동작 처리
                     if action_name == "파일 업로드" and task.get("file_path"):
-                        file_path = os.path.abspath(task["file_path"])
-                        if not os.path.exists(file_path):
-                            print(f"⚠️ 에러: 업로드할 파일 없음. 경로: {file_path}")
+                        # 💡 1. 단일 문자열이 들어와도 리스트로 변환하여 통일성 유지
+                        file_paths = task["file_path"]
+                        if isinstance(file_paths, str):
+                            file_paths = [file_paths]
+
+                        # 💡 2. 모든 파일이 존재하는지 검증 및 절대 경로 변환
+                        valid_paths = []
+                        for fp in file_paths:
+                            abs_path = os.path.abspath(fp)
+                            if not os.path.exists(abs_path):
+                                print(f"⚠️ 에러: 업로드할 파일 없음. 경로: {abs_path}")
+                            else:
+                                valid_paths.append(abs_path)
+
+                        if not valid_paths:
+                            print("❌ 유효한 파일이 없어 업로드를 취소합니다.")
                             continue
 
                         menu_item_xpath = (
@@ -181,13 +208,38 @@ def process_queue(driver, task_queue):
                             dialog.set_focus()
                             time.sleep(0.5)
 
+                            # 💡 3. 다중 파일 업로드를 위한 문자열 포맷팅 ("경로1" "경로2")
                             file_name_edit = dialog.child_window(class_name="Edit")
-                            file_name_edit.set_edit_text(file_path)
+                            formatted_paths = " ".join([f'"{p}"' for p in valid_paths])
+                            file_name_edit.set_edit_text(formatted_paths)
                             time.sleep(1)
 
                             dialog.type_keys("{ENTER}")
-                            print("✅ 파일 업로드 완료 (pywinauto win32 제어 성공)")
-                            time.sleep(3)
+                            print("✅ 파일 선택 완료 (다중 파일 입력 성공)")
+
+                            # 💡 4. 모든 파일이 업로드될 때까지 대기
+                            print(
+                                "⏳ 파일들이 웹 페이지에 완전히 업로드되기를 대기합니다..."
+                            )
+                            try:
+                                upload_wait = WebDriverWait(driver, 60)
+
+                                for valid_path in valid_paths:
+                                    file_basename = os.path.basename(valid_path)
+                                    file_chip_xpath = f"//*[contains(text(), '{file_basename}') or contains(@aria-label, '{file_basename}')]"
+
+                                    upload_wait.until(
+                                        EC.presence_of_element_located(
+                                            (By.XPATH, file_chip_xpath)
+                                        )
+                                    )
+                                    print(f"✅ '{file_basename}' 업로드 완료 확인!")
+
+                                time.sleep(1)  # 안정화를 위한 추가 대기
+
+                            except Exception as wait_e:
+                                print(f"⚠️ 파일 업로드 완료 대기 중 시간 초과: {wait_e}")
+
                         except Exception as win_e:
                             print(f"❌ OS 파일 열기 창 제어 실패: {win_e}")
 
@@ -357,9 +409,24 @@ def start_gemini_manual_session():
         # =====================================================
         my_tasks = [
             {
-                "prompt": "안녕, 내가 올린 파이썬 코드를 분석해주고, 시간 복잡도를 알려줘.",
+                "prompt": "이 코드에 현재시간을 출력하는 코드를 추가해줘.",
+                "attachment_action": "Canvas",
+                "file_path": r"C:\Users\gksdbwns\Desktop\secupro\ge\gemini_profile\test_code.py",
+                "new_chat": True,
+            },
+            {
+                "prompt": "이 코드에 주석을 자세히 추가해줘",
+                "attachment_action": "Canvas",
+                "file_path": None,
+                "new_chat": False,
+            },
+            {
+                "prompt": "내가 올린 파이썬 코드들의 차이점을 설명해줘",
                 "attachment_action": "파일 업로드",
-                "file_path": "test_code.py",
+                "file_path": [
+                    r"C:\Users\gksdbwns\yolo01\gmpy\v4b.py",
+                    r"C:\Users\gksdbwns\yolo01\gmpy\v4.py",
+                ],
                 "new_chat": True,
             },
             {
