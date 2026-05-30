@@ -36,7 +36,7 @@ def kill_chrome_processes():
 
 
 def wait_for_response(driver):
-    """답변 생성을 대기하는 함수입니다. (최대 10분 타임아웃 적용)"""
+    """답변 생성을 대기하고, 완료 시 해당 채팅의 고유 URL을 반환합니다. (최대 10분 타임아웃)"""
     print("⏳ 답변 생성 대기 중... (최대 10분 대기)")
     time.sleep(2)
 
@@ -70,14 +70,35 @@ def wait_for_response(driver):
 
             stop_btns = driver.find_elements(By.XPATH, stop_btn_xpath)
             if not any(btn.is_displayed() for btn in stop_btns):
-                print("✅ 답변 생성 완료 ('응답 중지' 버튼 사라짐)!")
-                time.sleep(2)
+                print("✅ 1차 검증: '응답 중지' 버튼 사라짐!")
+                time.sleep(1)
                 break
 
             time.sleep(1)  # 1초마다 버튼이 사라졌는지 확인
     else:
-        print("✅ 답변이 생성 완료되었습니다 ('응답 중지' 버튼 미감지).")
-        time.sleep(2)
+        print("✅ 1차 검증 통과 (생성 버튼 미감지). 빠른 응답이거나 이미 완료됨.")
+        time.sleep(1)
+
+    # 3단계: [추가] 답변 완료 후 렌더링된 요소 확인 (교차 검증)
+    print("🔍 답변 완료 최종 검증 중...")
+    try:
+        # 답변 하단에 나타나는 '복사(Copy)' 버튼을 기준으로 렌더링 완료 판단
+        copy_btn_xpath = (
+            "//button[contains(@aria-label, '복사') or contains(@aria-label, 'Copy')]"
+        )
+        WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.XPATH, copy_btn_xpath))
+        )
+        print("✅ 2차 검증: 답변 렌더링 최종 확인 완료!")
+    except Exception as e:
+        print(f"⚠️ 2차 검증 지연 (UI 변경 또는 로딩 지연 가능성): {e}")
+
+    # 4단계: [추가] 결과 링크(URL) 가져오기
+    time.sleep(1)  # URL이 완전히 매핑될 수 있도록 잠시 대기
+    current_chat_url = driver.current_url
+    print(f"🔗 완료된 채팅 링크: {current_chat_url}\n")
+
+    return current_chat_url
 
 
 def click_safely(driver, element):
@@ -98,9 +119,7 @@ def process_queue(driver, task_queue):
         )
 
         try:
-            # =====================================================
-            # 💡 [추가된 로직] Deep Research일 경우 강제로 새 채팅 활성화
-            # =====================================================
+            # Deep Research일 경우 강제로 새 채팅 활성화
             if task.get("attachment_action") == "Deep Research" and not task.get(
                 "new_chat"
             ):
@@ -108,9 +127,8 @@ def process_queue(driver, task_queue):
                     "💡 'Deep Research' 옵션이 감지되어 강제로 '새 채팅'을 시작합니다."
                 )
                 task["new_chat"] = True  # 값을 강제로 True로 덮어씌움
-            # =====================================================
-            # 1. 새 채팅(new_chat) 처리 로직 추가 (여기를 추가하세요!)
-            # =====================================================
+
+            # 1. 새 채팅(new_chat) 처리 로직
             if task.get("new_chat"):
                 print("✨ 단축키를 사용하여 '새 채팅'을 시작합니다...")
                 try:
@@ -128,6 +146,7 @@ def process_queue(driver, task_queue):
 
                 except Exception as e:
                     print(f"⚠️ '새 채팅' 단축키 입력 중 에러 발생: {e}")
+
             # 2. 첨부 메뉴 액션 처리
             action_name = task.get("attachment_action")
             file_path = task.get("file_path")
@@ -348,8 +367,9 @@ def process_queue(driver, task_queue):
                     break
                 time.sleep(0.5)
 
-            # 4. 답변 완료 대기
-            wait_for_response(driver)
+            # 4. 답변 완료 대기 및 링크 수집
+            result_url = wait_for_response(driver)
+            task["result_url"] = result_url
 
         except Exception as e:
             print(f"❌ 작업 [{index + 1}] 처리 중 에러 발생: {e}")
@@ -461,7 +481,27 @@ def start_gemini_manual_session():
 
         print("\n🚀 지정된 큐(Queue) 자동 실행을 시작합니다...")
         process_queue(driver, my_tasks)
-        print("\n🎉 모든 큐 작업이 성공적으로 완료되었습니다!")
+
+        # =====================================================
+        # 📊 모든 작업 완료 후 수집된 링크 리포트 출력
+        # =====================================================
+        print("\n" + "=" * 60)
+        print("🎉 모든 큐 작업이 성공적으로 완료되었습니다!")
+        print("📊 [자동화 작업 결과 리포트]")
+        print("=" * 60)
+
+        for i, task in enumerate(my_tasks):
+            prompt_summary = (
+                task["prompt"][:15] + "..."
+                if len(task["prompt"]) > 15
+                else task["prompt"]
+            )
+            url_result = task.get("result_url", "❌ 링크 수집 실패 또는 에러 발생")
+            print(f" [{i + 1}] 질문: {prompt_summary:<18} ➡️  링크: {url_result}")
+
+        print("=" * 60)
+        # =====================================================
+
         time.sleep(60)
 
     except Exception as e:
